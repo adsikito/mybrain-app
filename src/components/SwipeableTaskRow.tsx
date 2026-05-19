@@ -19,63 +19,50 @@ import Animated, {
 
 import type { TaskRecord } from '../../database';
 
-export type SwipeableTaskRowTask = Omit<TaskRecord, 'status'> & {
-  status: TaskRecord['status'] | 'in_progress';
-  quadrant?: number;
-  duration?: number;
-  actual_duration?: number;
-  parent_id?: string | null;
-};
-
 export interface SwipeableTaskRowProps {
-  task: SwipeableTaskRowTask;
+  task: TaskRecord;
   onComplete: (id: string) => void;
   onFreeze: (id: string) => void;
-  onTriggerAI?: (task: SwipeableTaskRowTask) => void;
-  children?: React.ReactNode;
+  onTriggerAI?: (task: TaskRecord) => void;
+  onFocus?: (task: TaskRecord) => void;
+  enableHaptics?: boolean;
   style?: StyleProp<ViewStyle>;
 }
 
-const ACTION_WIDTH = 160;
-const RIGHT_TRIGGER_DISTANCE = ACTION_WIDTH * 0.35;
-const LEFT_TRIGGER_DISTANCE = -ACTION_WIDTH * 0.35;
+const ACTION_WIDTH = 150;
+const COMPLETE_DISTANCE = 96;
+const OPEN_DISTANCE = -132;
 
-function getStatusLabel(status: SwipeableTaskRowTask['status']) {
-  switch (status) {
-    case 'completed':
-      return 'Completed';
-    case 'frozen':
-      return 'Frozen';
-    case 'in_progress':
-      return 'In progress';
+const QUADRANT_COLORS: Record<number, string> = {
+  1: '#FF3B30',
+  2: '#007AFF',
+  3: '#FF9500',
+  4: '#8E8E93',
+};
+
+function getQuadrantText(quadrant: number) {
+  switch (quadrant) {
+    case 1:
+      return '\u91cd\u8981\u7d27\u6025';
+    case 2:
+      return '\u91cd\u8981\u4e0d\u6025';
+    case 3:
+      return '\u7d27\u6025\u4e0d\u91cd';
+    case 4:
+      return '\u7a0d\u540e\u6574\u7406';
     default:
-      return 'Pending';
+      return '\u672a\u5f52\u7c7b';
   }
 }
 
-function getStatusColor(status: SwipeableTaskRowTask['status']) {
+function getStatusText(status: TaskRecord['status']) {
   switch (status) {
     case 'completed':
-      return '#10b981';
+      return '\u5df2\u5b8c\u6210';
     case 'frozen':
-      return '#8b5cf6';
-    case 'in_progress':
-      return '#f59e0b';
+      return '\u5df2\u6401\u7f6e';
     default:
-      return '#2563eb';
-  }
-}
-
-function getStatusSurface(status: SwipeableTaskRowTask['status']) {
-  switch (status) {
-    case 'completed':
-      return '#ecfdf5';
-    case 'frozen':
-      return '#f5f3ff';
-    case 'in_progress':
-      return '#fffbeb';
-    default:
-      return '#eff6ff';
+      return '\u5f85\u5904\u7406';
   }
 }
 
@@ -89,33 +76,55 @@ function SwipeableTaskRowComponent({
   onComplete,
   onFreeze,
   onTriggerAI,
-  children,
+  onFocus,
+  enableHaptics = true,
   style,
 }: SwipeableTaskRowProps) {
   const translateX = useSharedValue(0);
+  const quadrantColor = QUADRANT_COLORS[task.quadrant] ?? '#8E8E93';
 
   const resetPosition = useCallback(() => {
     translateX.value = withSpring(0, {
-      damping: 18,
-      stiffness: 220,
+      damping: 19,
+      stiffness: 240,
     });
   }, [translateX]);
 
-  const triggerComplete = useCallback(() => {
-    Vibration.vibrate(12);
-    onComplete(task.id);
-  }, [onComplete, task.id]);
+  const vibrate = useCallback(() => {
+    if (enableHaptics) {
+      Vibration.vibrate(10);
+    }
+  }, [enableHaptics]);
 
-  const triggerFreeze = useCallback(() => {
-    Vibration.vibrate(12);
+  const complete = useCallback(() => {
+    vibrate();
+    onComplete(task.id);
+  }, [onComplete, task.id, vibrate]);
+
+  const freeze = useCallback(() => {
+    vibrate();
     onFreeze(task.id);
-  }, [onFreeze, task.id]);
+  }, [onFreeze, task.id, vibrate]);
 
   const triggerAI = useCallback(() => {
-    if (onTriggerAI) {
-      onTriggerAI(task);
-    }
-  }, [onTriggerAI, task]);
+    resetPosition();
+    onTriggerAI?.(task);
+  }, [onTriggerAI, resetPosition, task]);
+
+  const triggerFocus = useCallback(() => {
+    onFocus?.(task);
+  }, [onFocus, task]);
+
+  const settleThen = useCallback(
+    (action: () => void) => {
+      translateX.value = withTiming(0, { duration: 130 }, (finished) => {
+        if (finished) {
+          runOnJS(action)();
+        }
+      });
+    },
+    [translateX],
+  );
 
   const panGesture = useMemo(
     () =>
@@ -123,150 +132,100 @@ function SwipeableTaskRowComponent({
         .hitSlop({ left: 20, right: 20, top: 6, bottom: 6 })
         .activeOffsetX([-10, 10])
         .onUpdate((event) => {
-          translateX.value = clamp(event.translationX, -ACTION_WIDTH, ACTION_WIDTH);
+          const nextX =
+            event.translationX > 0
+              ? clamp(event.translationX * 0.86, 0, ACTION_WIDTH)
+              : clamp(event.translationX, -ACTION_WIDTH, 0);
+          translateX.value = nextX;
         })
         .onEnd((event) => {
-          const shouldComplete =
-            event.translationX > RIGHT_TRIGGER_DISTANCE || event.velocityX > 900;
-          const shouldFreeze =
-            event.translationX < LEFT_TRIGGER_DISTANCE || event.velocityX < -900;
-
-          if (shouldComplete) {
-            translateX.value = withTiming(ACTION_WIDTH, { duration: 160 }, (finished) => {
+          if (event.translationX > COMPLETE_DISTANCE || event.velocityX > 900) {
+            translateX.value = withTiming(ACTION_WIDTH, { duration: 170 }, (finished) => {
               if (finished) {
-                runOnJS(triggerComplete)();
-                translateX.value = withSpring(0, {
-                  damping: 18,
-                  stiffness: 240,
-                });
+                runOnJS(complete)();
+                translateX.value = withSpring(0, { damping: 20, stiffness: 260 });
               }
             });
             return;
           }
 
-          if (shouldFreeze) {
-            translateX.value = withTiming(-ACTION_WIDTH, { duration: 160 }, (finished) => {
-              if (finished) {
-                runOnJS(triggerFreeze)();
-                translateX.value = withSpring(0, {
-                  damping: 18,
-                  stiffness: 240,
-                });
-              }
+          if (event.translationX < -64 || event.velocityX < -650) {
+            translateX.value = withSpring(OPEN_DISTANCE, {
+              damping: 18,
+              stiffness: 230,
             });
             return;
           }
 
           runOnJS(resetPosition)();
         }),
-    [resetPosition, triggerComplete, triggerFreeze, translateX],
+    [complete, resetPosition, translateX],
   );
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: translateX.value }],
   }));
 
-  const statusColor = getStatusColor(task.status);
-  const statusSurface = getStatusSurface(task.status);
-  const statusLabel = getStatusLabel(task.status);
-
-  const metaChips = useMemo(() => {
-    const chips: string[] = [];
-
-    if (typeof task.quadrant === 'number') {
-      chips.push(`Q${task.quadrant}`);
-    }
-
-    if (typeof task.duration === 'number') {
-      chips.push(`${task.duration}m`);
-    }
-
-    if (typeof task.actual_duration === 'number') {
-      chips.push(`actual ${task.actual_duration}m`);
-    }
-
-    if (task.parent_split_id) {
-      chips.push('split');
-    }
-
-    return chips;
-  }, [task.actual_duration, task.duration, task.parent_split_id, task.quadrant]);
-
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, style]}>
       <View style={styles.underlay}>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => {
-            resetPosition();
-            triggerComplete();
-          }}
-          style={[styles.action, styles.completeAction]}
-        >
-          <Text style={styles.actionText}>完成</Text>
-        </Pressable>
-
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => {
-            resetPosition();
-            triggerFreeze();
-          }}
-          style={[styles.action, styles.freezeAction]}
-        >
-          <Text style={styles.actionText}>冻结</Text>
-        </Pressable>
+        <View style={styles.completeUnderlay}>
+          <Text style={styles.completeText}>{'\u5b8c\u6210'}</Text>
+        </View>
+        <View style={styles.actionPanel}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => settleThen(freeze)}
+            style={styles.actionButton}
+          >
+            <Text style={styles.actionButtonText}>{'\u6401\u7f6e'}</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={triggerAI} style={styles.actionButton}>
+            <Text style={styles.actionButtonText}>{'AI\u62c6\u89e3'}</Text>
+          </Pressable>
+        </View>
       </View>
 
       <GestureDetector gesture={panGesture}>
-        <Animated.View
-          style={[
-            styles.front,
-            { backgroundColor: statusSurface, borderLeftColor: statusColor },
-            animatedStyle,
-            style,
-            task.status === 'frozen' && styles.frozen,
-          ]}
-        >
-          {children ? (
-            children
-          ) : (
-            <View style={styles.content}>
-              <View style={styles.headingRow}>
-                <Text numberOfLines={1} style={styles.title}>
-                  {task.title}
-                </Text>
-                <View style={[styles.statusPill, { borderColor: statusColor }]}>
-                  <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
-                </View>
-              </View>
+        <Animated.View style={[styles.front, animatedStyle, task.status === 'frozen' && styles.frozen]}>
+          <View style={[styles.indicator, { backgroundColor: quadrantColor }]} />
 
-              <View style={styles.metaRow}>
-                {metaChips.map((chip) => (
-                  <View key={chip} style={styles.metaChip}>
-                    <Text numberOfLines={1} style={styles.metaText}>
-                      {chip}
-                    </Text>
-                  </View>
-                ))}
-                {task.frozen_reason ? (
-                  <Text numberOfLines={1} style={styles.reason}>
-                    {task.frozen_reason}
-                  </Text>
-                ) : null}
-              </View>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => settleThen(complete)}
+            style={[styles.checkCircle, { borderColor: quadrantColor }]}
+          >
+            {task.status === 'completed' ? <View style={[styles.checkDot, { backgroundColor: quadrantColor }]} /> : null}
+          </Pressable>
 
-              {onTriggerAI ? (
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={triggerAI}
-                  style={styles.aiButton}
-                >
-                  <Text style={styles.aiButtonText}>AI拆解</Text>
+          <View style={styles.copy}>
+            <View style={styles.titleRow}>
+              <Text numberOfLines={2} style={styles.title}>
+                {task.title}
+              </Text>
+              {onFocus ? (
+                <Pressable accessibilityRole="button" onPress={triggerFocus} style={styles.focusButton}>
+                  <Text style={styles.focusButtonText}>25</Text>
                 </Pressable>
               ) : null}
             </View>
-          )}
+
+            <View style={styles.metaRow}>
+              <Text style={[styles.quadrantText, { color: quadrantColor }]}>
+                {getQuadrantText(task.quadrant)}
+              </Text>
+              <Text style={styles.dot}>/</Text>
+              <Text style={styles.statusText}>{getStatusText(task.status)}</Text>
+              {task.frozen_reason ? (
+                <>
+                  <Text style={styles.dot}>/</Text>
+                  <Text numberOfLines={1} style={styles.reasonText}>
+                    {task.frozen_reason}
+                  </Text>
+                </>
+              ) : null}
+            </View>
+          </View>
         </Animated.View>
       </GestureDetector>
     </View>
@@ -277,110 +236,146 @@ export const SwipeableTaskRow = memo(SwipeableTaskRowComponent);
 
 const styles = StyleSheet.create({
   container: {
-    position: 'relative',
-    marginVertical: 6,
-    borderRadius: 14,
+    minHeight: 68,
+    borderRadius: 12,
     overflow: 'hidden',
+    marginVertical: 5,
+    backgroundColor: '#FFFFFF',
   },
   underlay: {
     ...StyleSheet.absoluteFillObject,
     flexDirection: 'row',
+    backgroundColor: '#F9F9FB',
   },
-  action: {
+  completeUnderlay: {
+    width: ACTION_WIDTH,
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    paddingLeft: 22,
+    backgroundColor: '#EAF8EE',
+  },
+  completeText: {
+    color: '#34C759',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  actionPanel: {
+    marginLeft: 'auto',
+    width: ACTION_WIDTH,
+    flexDirection: 'row',
+    backgroundColor: '#F4F4F6',
+  },
+  actionButton: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 12,
+    borderLeftWidth: 1,
+    borderLeftColor: '#E5E5EA',
   },
-  completeAction: {
-    backgroundColor: '#059669',
-  },
-  freezeAction: {
-    backgroundColor: '#7c3aed',
-  },
-  actionText: {
-    color: '#ffffff',
+  actionButtonText: {
+    color: '#1C1C1E',
     fontSize: 13,
     fontWeight: '700',
-    letterSpacing: 0,
   },
   front: {
-    borderLeftWidth: 4,
-    borderRadius: 14,
-    minHeight: 72,
-    backgroundColor: '#ffffff',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 2,
+    minHeight: 68,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#ECECEE',
+    shadowColor: '#1C1C1E',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.03,
+    shadowRadius: 12,
+    elevation: 1,
   },
   frozen: {
     opacity: 0.62,
   },
-  content: {
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    gap: 8,
+  indicator: {
+    width: 3,
+    alignSelf: 'stretch',
+    borderTopLeftRadius: 12,
+    borderBottomLeftRadius: 12,
   },
-  headingRow: {
-    flexDirection: 'row',
+  checkCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
     alignItems: 'center',
-    gap: 10,
+    justifyContent: 'center',
+    marginLeft: 14,
+    marginRight: 10,
+  },
+  checkDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  copy: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingRight: 12,
+    gap: 6,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
   },
   title: {
     flex: 1,
-    color: '#0f172a',
+    color: '#1C1C1E',
     fontSize: 16,
-    lineHeight: 22,
+    lineHeight: 21,
     fontWeight: '700',
   },
-  statusPill: {
+  focusButton: {
+    width: 32,
+    height: 28,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F4F4F6',
     borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    backgroundColor: '#ffffff',
+    borderColor: '#ECECEE',
   },
-  statusText: {
+  focusButtonText: {
+    color: '#1C1C1E',
     fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0,
+    fontWeight: '800',
   },
   metaRow: {
+    minHeight: 18,
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-    gap: 6,
+    gap: 4,
   },
-  metaChip: {
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    backgroundColor: '#e2e8f0',
+  quadrantText: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '700',
   },
-  metaText: {
-    color: '#334155',
-    fontSize: 11,
+  dot: {
+    color: '#C7C7CC',
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  statusText: {
+    color: '#8E8E93',
+    fontSize: 12,
+    lineHeight: 17,
     fontWeight: '600',
   },
-  reason: {
+  reasonText: {
     flexShrink: 1,
-    color: '#475569',
+    color: '#8E8E93',
     fontSize: 12,
-    lineHeight: 16,
-  },
-  aiButton: {
-    alignSelf: 'flex-start',
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: '#eff6ff',
-  },
-  aiButtonText: {
-    color: '#1d4ed8',
-    fontSize: 12,
-    fontWeight: '700',
+    lineHeight: 17,
   },
 });
 
