@@ -33,6 +33,8 @@ type SettingRow = {
 export const API_KEY_STORAGE_KEY = 'mybrain_api_key';
 export const API_BASE_URL_STORAGE_KEY = 'mybrain_api_base_url';
 export const MODEL_NAME_STORAGE_KEY = 'mybrain_model_name';
+export const DAY_START_HOUR_STORAGE_KEY = 'mybrain_day_start_hour';
+export const DAY_END_HOUR_STORAGE_KEY = 'mybrain_day_end_hour';
 export const DEFAULT_API_BASE_URL = 'https://api.openai.com/v1';
 export const DEFAULT_MODEL_NAME = 'gpt-4o';
 
@@ -117,10 +119,12 @@ export function SettingsView({
 
     const loadSecureSettings = async () => {
       try {
-        const [storedKey, storedBaseUrl, storedModel] = await Promise.all([
+        const [storedKey, storedBaseUrl, storedModel, storedDayStart, storedDayEnd] = await Promise.all([
           SecureStore.getItemAsync(API_KEY_STORAGE_KEY),
           SecureStore.getItemAsync(API_BASE_URL_STORAGE_KEY),
           SecureStore.getItemAsync(MODEL_NAME_STORAGE_KEY),
+          SecureStore.getItemAsync(DAY_START_HOUR_STORAGE_KEY),
+          SecureStore.getItemAsync(DAY_END_HOUR_STORAGE_KEY),
         ]);
 
         if (!alive) {
@@ -130,6 +134,12 @@ export function SettingsView({
         setApiKey(storedKey ?? '');
         setApiBaseUrl(storedBaseUrl ?? DEFAULT_API_BASE_URL);
         setModelName(storedModel ?? DEFAULT_MODEL_NAME);
+
+        const nextDayStart = storedDayStart === null ? dayStartHour : clampHour(Number(storedDayStart));
+        const nextDayEnd = storedDayEnd === null ? dayEndHour : clampHour(Number(storedDayEnd));
+        if (nextDayStart < nextDayEnd) {
+          onChangeDayHours({ dayStartHour: nextDayStart, dayEndHour: nextDayEnd });
+        }
       } catch {
         if (alive) {
           setSaveState('error');
@@ -163,6 +173,8 @@ export function SettingsView({
         SecureStore.setItemAsync(API_KEY_STORAGE_KEY, apiKey.trim()),
         SecureStore.setItemAsync(API_BASE_URL_STORAGE_KEY, apiBaseUrl.trim() || DEFAULT_API_BASE_URL),
         SecureStore.setItemAsync(MODEL_NAME_STORAGE_KEY, modelName.trim() || DEFAULT_MODEL_NAME),
+        SecureStore.setItemAsync(DAY_START_HOUR_STORAGE_KEY, String(dayStartHour)),
+        SecureStore.setItemAsync(DAY_END_HOUR_STORAGE_KEY, String(dayEndHour)),
       ]);
       setSaveState('saved');
     } catch {
