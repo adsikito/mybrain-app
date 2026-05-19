@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -50,6 +50,54 @@ const DEFAULT_DAY_START_HOUR = 8;
 const DEFAULT_DAY_END_HOUR = 22;
 const FOCUS_DURATION_MS = 25 * 60 * 1000;
 
+class AppErrorBoundary extends Component<
+  {
+    children: ReactNode;
+    onRetry: () => void;
+  },
+  {
+    hasError: boolean;
+    message: string | null;
+  }
+> {
+  constructor(props: { children: ReactNode; onRetry: () => void }) {
+    super(props);
+    this.state = { hasError: false, message: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return {
+      hasError: true,
+      message: error.message,
+    };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('[AppErrorBoundary] 渲染崩溃', error, info);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={styles.boundaryShell}>
+          <View style={styles.boundaryCard}>
+            <Text style={styles.boundaryKicker}>错误边界</Text>
+            <Text style={styles.boundaryTitle}>界面刚刚遇到了一次崩溃</Text>
+            <Text style={styles.boundaryBody}>
+              {this.state.message ?? '渲染链路出现了不可逆异常，已阻止白屏。你可以重新冷启动当前界面。'}
+            </Text>
+            <Pressable accessibilityRole="button" onPress={this.props.onRetry} style={styles.boundaryButton}>
+              <Text style={styles.boundaryButtonText}>重新启动</Text>
+            </Pressable>
+          </View>
+        </View>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 function formatRemaining(ms: number) {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -63,7 +111,7 @@ function getTodayAt(hour: number, minute = 0) {
   return date.getTime();
 }
 
-export default function App() {
+function AppShell() {
   const [loadState, setLoadState] = useState<LoadState>('booting');
   const [activeTab, setActiveTab] = useState<AppTab>('matrix');
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
@@ -223,6 +271,7 @@ export default function App() {
         await reloadTasks();
         setLoadState('ready');
       } catch (error) {
+        console.error('[App] 初始化失败', error);
         if (!alive) {
           return;
         }
@@ -441,6 +490,16 @@ export default function App() {
   );
 }
 
+export default function App() {
+  const [restartSeed, setRestartSeed] = useState(0);
+
+  return (
+    <AppErrorBoundary key={restartSeed} onRetry={() => setRestartSeed((value) => value + 1)}>
+      <AppShell />
+    </AppErrorBoundary>
+  );
+}
+
 const styles = StyleSheet.create({
   root: {
     flex: 1,
@@ -504,6 +563,48 @@ const styles = StyleSheet.create({
     color: '#B00020',
     fontSize: 13,
     lineHeight: 18,
+  },
+  boundaryShell: {
+    flex: 1,
+    backgroundColor: '#F9F9FB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 18,
+  },
+  boundaryCard: {
+    ...CARD_SURFACE_STYLE,
+    width: '100%',
+    padding: 18,
+    gap: 10,
+  },
+  boundaryKicker: {
+    color: '#8E8E93',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  boundaryTitle: {
+    color: '#1C1C1E',
+    fontSize: 20,
+    lineHeight: 26,
+    fontWeight: '800',
+  },
+  boundaryBody: {
+    color: '#3A3A3C',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  boundaryButton: {
+    minHeight: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1C1C1E',
+    marginTop: 4,
+  },
+  boundaryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
   },
   content: {
     flex: 1,

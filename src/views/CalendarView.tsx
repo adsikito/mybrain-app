@@ -146,7 +146,8 @@ export function CalendarView({ tasks, dayStartHour, dayEndHour, onScheduleTask }
             .sort((left, right) => left.startAt - right.startAt),
         );
         setPermissionState('granted');
-      } catch {
+      } catch (error) {
+        console.error('[CalendarView] 读取系统日历失败', error);
         if (alive) {
           setPermissionState('unavailable');
           setSystemEvents([]);

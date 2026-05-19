@@ -140,7 +140,8 @@ export function SettingsView({
         if (nextDayStart < nextDayEnd) {
           onChangeDayHours({ dayStartHour: nextDayStart, dayEndHour: nextDayEnd });
         }
-      } catch {
+      } catch (error) {
+        console.error('[SettingsView] 读取 SecureStore 配置失败', error);
         if (alive) {
           setSaveState('error');
         }
@@ -177,7 +178,8 @@ export function SettingsView({
         SecureStore.setItemAsync(DAY_END_HOUR_STORAGE_KEY, String(dayEndHour)),
       ]);
       setSaveState('saved');
-    } catch {
+    } catch (error) {
+      console.error('[SettingsView] 保存 SecureStore 配置失败', error);
       setSaveState('error');
     }
   };
@@ -187,7 +189,8 @@ export function SettingsView({
     try {
       await onSyncBackup();
       setSyncState('synced');
-    } catch {
+    } catch (error) {
+      console.error('[SettingsView] 同步备份失败', error);
       setSyncState('error');
     }
   };

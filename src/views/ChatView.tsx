@@ -33,6 +33,14 @@ type ChatMessage =
     }
   | {
       id: string;
+      kind: 'warning';
+      role: 'assistant';
+      title: string;
+      errorText: string;
+      sourceText: string;
+    }
+  | {
+      id: string;
       kind: 'plan';
       role: 'assistant';
       plan: TaskTransactionPlan;
@@ -257,30 +265,39 @@ export function ChatView({ onSubmitPlan }: ChatViewProps) {
         text: '已按你的确认安全导入本地 SQLite。',
       });
     } catch (error) {
+      console.error('[ChatView] 确认导入失败', error);
       updatePlanStatus(id, 'error', error instanceof Error ? error.message : '导入失败');
     }
   };
 
-  const sendMessage = async () => {
-    const text = draft.trim();
+  const sendMessage = async (sourceText?: string, options?: { echoUser?: boolean }) => {
+    const text = (sourceText ?? draft).trim();
     if (!text || sendState === 'sending') {
       return;
     }
 
-    setDraft('');
+    if (sourceText === undefined) {
+      setDraft('');
+    }
+
     setSendState('sending');
-    appendMessage({ id: makeId('user'), kind: 'text', role: 'user', text });
+    if (options?.echoUser !== false) {
+      appendMessage({ id: makeId('user'), kind: 'text', role: 'user', text });
+    }
 
     try {
       const aiTasks = await requestAiTasks(text);
       const plan = buildTransactionPlan(text, aiTasks);
       appendMessage({ id: makeId('plan'), kind: 'plan', role: 'assistant', plan, status: 'draft' });
     } catch (error) {
+      console.error('[ChatView] 请求模型失败', error);
       appendMessage({
-        id: makeId('assistant'),
-        kind: 'text',
+        id: makeId('warning'),
+        kind: 'warning',
         role: 'assistant',
-        text: error instanceof Error ? error.message : '模型请求失败，请稍后重试。',
+        title: '网络暂时不可用',
+        errorText: error instanceof Error ? error.message : '中转网关或模型接口返回了未知错误，请稍后重试。',
+        sourceText: text,
       });
     } finally {
       setSendState('idle');
@@ -301,21 +318,18 @@ export function ChatView({ onSubmitPlan }: ChatViewProps) {
         <Pressable
           accessibilityRole="button"
           disabled={!canSend}
-          onPress={sendMessage}
+          onPress={() => void sendMessage()}
           style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
         >
           <Text style={styles.sendText}>{sendState === 'sending' ? '思考中' : '发送'}</Text>
         </Pressable>
       </View>
     ),
-    [canSend, draft, sendState],
+    [canSend, draft, sendMessage, sendState],
   );
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      style={styles.container}
-    >
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.kicker}>助理</Text>
         <Text style={styles.title}>先确认，再写入</Text>
@@ -327,6 +341,23 @@ export function ChatView({ onSubmitPlan }: ChatViewProps) {
         contentContainerStyle={styles.listContent}
         style={styles.list}
         renderItem={({ item }) => {
+          if (item.kind === 'warning') {
+            return (
+              <View style={styles.warningCard}>
+                <Text style={styles.warningTitle}>{item.title}</Text>
+                <Text style={styles.warningBody}>{item.errorText}</Text>
+                <Text style={styles.warningHint}>你可以稍后重新发送同一条拆解请求。</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => void sendMessage(item.sourceText, { echoUser: false })}
+                  style={styles.warningButton}
+                >
+                  <Text style={styles.warningButtonText}>重新发送</Text>
+                </Pressable>
+              </View>
+            );
+          }
+
           if (item.kind === 'plan') {
             return (
               <View style={styles.planCard}>
@@ -352,7 +383,7 @@ export function ChatView({ onSubmitPlan }: ChatViewProps) {
                 <Pressable
                   accessibilityRole="button"
                   disabled={item.status === 'submitting' || item.status === 'submitted'}
-                  onPress={() => confirmPlan(item.id, item.plan)}
+                  onPress={() => void confirmPlan(item.id, item.plan)}
                   style={[
                     styles.confirmButton,
                     (item.status === 'submitting' || item.status === 'submitted') && styles.confirmButtonDisabled,
@@ -431,6 +462,41 @@ const styles = StyleSheet.create({
   },
   userText: {
     color: '#FFFFFF',
+  },
+  warningCard: {
+    ...CARD_SURFACE_STYLE,
+    backgroundColor: '#FFF5F5',
+    borderColor: '#FFB4B4',
+    padding: 14,
+    gap: 10,
+  },
+  warningTitle: {
+    color: '#B00020',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  warningBody: {
+    color: '#7A1525',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  warningHint: {
+    color: '#B36B74',
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  warningButton: {
+    minHeight: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#B00020',
+    marginTop: 2,
+  },
+  warningButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
   },
   planCard: {
     ...CARD_SURFACE_STYLE,
