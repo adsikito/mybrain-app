@@ -1,0 +1,13 @@
+Use Expo managed workflow conventions for this project.
+
+Read package.json, app.json, tsconfig.json, and database.ts before changing behavior.
+
+Keep edits small and preserve MyBrain AI task-state semantics: pending, frozen, completed.
+
+Treat database.ts as the local SQLite core. Prefer typed helpers and read-only checks.
+
+When adding native dependencies, verify Expo compatibility first and keep Babel in sync.
+
+Use ASCII unless a file already requires another character set.
+
+Do not claim encryption, sync, or background-device support unless code actually implements it.
