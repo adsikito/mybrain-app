@@ -9,10 +9,19 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 
 import type { TaskInput, TaskTransactionPlan } from '../../database';
+import {
+  API_BASE_URL_STORAGE_KEY,
+  API_KEY_STORAGE_KEY,
+  DEFAULT_API_BASE_URL,
+  DEFAULT_MODEL_NAME,
+  MODEL_NAME_STORAGE_KEY,
+} from './SettingsView';
 
 type PlanStatus = 'draft' | 'submitting' | 'submitted' | 'error';
+type ChatSendState = 'idle' | 'sending';
 
 type ChatMessage =
   | {
@@ -30,19 +39,27 @@ type ChatMessage =
       errorMessage?: string;
     };
 
+type AiTaskItem = {
+  title: string;
+  quadrant?: number;
+  durationMinutes?: number;
+};
+
+type AiTaskResponse = {
+  title?: string;
+  tasks?: AiTaskItem[];
+};
+
 export interface ChatViewProps {
   onSubmitPlan: (plan: TaskTransactionPlan) => Promise<void>;
 }
-
-const SPLIT_KEYWORD = '\u62c6\u89e3';
-const POSTPONE_KEYWORD = '\u63a8\u8fdf';
 
 const INITIAL_MESSAGES: ChatMessage[] = [
   {
     id: 'hello',
     kind: 'text',
     role: 'assistant',
-    text: '\u6211\u53ea\u4f1a\u5148\u8d77\u8349\u4e8b\u52a1\u5361\uff0c\u7b49\u4f60\u786e\u8ba4\u540e\u518d\u5199\u5165\u672c\u5730\u3002',
+    text: '我会先向你配置的模型请求拆解建议，只生成事务确认卡。你点下确认后，我才写入本地 SQLite。',
   },
 ];
 
@@ -54,73 +71,173 @@ function shorten(text: string, maxLength: number) {
   return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}...`;
 }
 
-function extractActionItems(sourceText: string) {
-  const stripped = sourceText
-    .replace(SPLIT_KEYWORD, '')
-    .replace(POSTPONE_KEYWORD, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const pieces = stripped
-    .split(/[,.;/|]+/u)
-    .map((piece) => piece.trim())
-    .filter(Boolean);
-  return pieces.length > 0 ? pieces : [sourceText.trim()];
+function normalizeQuadrant(value: number | undefined) {
+  if (value === 1 || value === 2 || value === 3 || value === 4) {
+    return value;
+  }
+
+  return 2;
 }
 
-function buildTransactionPlan(sourceText: string): TaskTransactionPlan | null {
-  const text = sourceText.trim();
-  if (!text) {
-    return null;
+function stripJsonFence(value: string) {
+  return value
+    .trim()
+    .replace(/^```(?:json)?/u, '')
+    .replace(/```$/u, '')
+    .trim();
+}
+
+function parseAiTaskResponse(content: string): AiTaskItem[] {
+  const parsed = JSON.parse(stripJsonFence(content)) as AiTaskResponse | AiTaskItem[];
+  const rawTasks = Array.isArray(parsed) ? parsed : parsed.tasks;
+
+  if (!Array.isArray(rawTasks)) {
+    throw new Error('模型没有返回 tasks 数组。');
   }
 
-  const hasSplit = text.includes(SPLIT_KEYWORD);
-  const hasPostpone = text.includes(POSTPONE_KEYWORD);
-  if (!hasSplit && !hasPostpone) {
-    return null;
+  const tasks = rawTasks
+    .map((item) => ({
+      title: typeof item.title === 'string' ? item.title.trim() : '',
+      quadrant: normalizeQuadrant(item.quadrant),
+      durationMinutes:
+        typeof item.durationMinutes === 'number' && Number.isFinite(item.durationMinutes)
+          ? Math.max(5, Math.min(240, Math.round(item.durationMinutes)))
+          : 25,
+    }))
+    .filter((item) => item.title.length > 0)
+    .slice(0, 8);
+
+  if (tasks.length === 0) {
+    throw new Error('模型返回了空任务列表。');
   }
 
-  const mode = hasPostpone ? 'postpone' : 'split';
+  return tasks;
+}
+
+function buildTransactionPlan(sourceText: string, aiTasks: AiTaskItem[]): TaskTransactionPlan {
   const planId = `chat-plan-${Date.now()}`;
   const parentId = `${planId}-parent`;
-  const status: TaskInput['status'] = mode === 'postpone' ? 'frozen' : 'pending';
-  const items = extractActionItems(text).slice(0, 4);
+  const parentTask: TaskInput = {
+    id: parentId,
+    title: shorten(sourceText, 42),
+    status: 'pending',
+    quadrant: 2,
+    payload: { source: 'chat', mode: 'ai_decomposition', sourceText },
+  };
 
   return {
     id: planId,
-    title: mode === 'split' ? '\u62c6\u89e3\u5efa\u8bae' : '\u63a8\u8fdf\u5efa\u8bae',
-    sourceText: text,
+    title: 'AI 拆解建议',
+    sourceText,
     operations: [
-      {
-        kind: 'upsert',
-        task: {
-          id: parentId,
-          title: shorten(text, 32),
-          status,
-          quadrant: mode === 'split' ? 2 : 3,
-          frozenReason: mode === 'postpone' ? '\u7531\u52a9\u7406\u5efa\u8bae\u63a8\u8fdf' : null,
-          payload: { source: 'chat', mode, sourceText: text },
-        },
-      },
-      ...items.map((item, index) => ({
+      { kind: 'upsert', task: parentTask },
+      ...aiTasks.map((item, index) => ({
         kind: 'upsert' as const,
         task: {
           id: `${planId}-item-${index + 1}`,
-          title: shorten(item, 42),
-          status,
-          quadrant: mode === 'split' ? 2 : 3,
+          title: shorten(item.title, 58),
+          status: 'pending' as const,
+          quadrant: normalizeQuadrant(item.quadrant),
           parentSplitId: parentId,
-          frozenReason: mode === 'postpone' ? '\u7531\u52a9\u7406\u5efa\u8bae\u63a8\u8fdf' : null,
-          payload: { source: 'chat', mode, sourceText: text, index: index + 1 },
+          payload: {
+            source: 'chat',
+            mode: 'ai_decomposition',
+            sourceText,
+            durationMinutes: item.durationMinutes ?? 25,
+            index: index + 1,
+          },
         },
       })),
     ],
   };
 }
 
+async function readModelConfig() {
+  const [apiKey, apiBaseUrl, modelName] = await Promise.all([
+    SecureStore.getItemAsync(API_KEY_STORAGE_KEY),
+    SecureStore.getItemAsync(API_BASE_URL_STORAGE_KEY),
+    SecureStore.getItemAsync(MODEL_NAME_STORAGE_KEY),
+  ]);
+
+  return {
+    apiKey: apiKey?.trim() ?? '',
+    apiBaseUrl: (apiBaseUrl?.trim() || DEFAULT_API_BASE_URL).replace(/\/+$/u, ''),
+    modelName: modelName?.trim() || DEFAULT_MODEL_NAME,
+  };
+}
+
+async function requestAiTasks(sourceText: string) {
+  const { apiKey, apiBaseUrl, modelName } = await readModelConfig();
+
+  if (!apiKey) {
+    throw new Error('请先在设置页保存 API Key。');
+  }
+
+  const response = await fetch(`${apiBaseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: modelName,
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content:
+            '你是 MyBrain AI 的任务拆解器。只返回 JSON，不要 Markdown。格式必须是 {"tasks":[{"title":"中文子任务","quadrant":1|2|3|4,"durationMinutes":25}]}。quadrant 代表四象限：1重要紧急，2重要不紧急，3紧急不重要，4不重要不紧急。任务标题必须是简洁中文动词短句。',
+        },
+        {
+          role: 'user',
+          content: sourceText,
+        },
+      ],
+    }),
+  });
+
+  const payload = await response.json();
+
+  if (!response.ok) {
+    const message =
+      typeof payload?.error?.message === 'string'
+        ? payload.error.message
+        : `模型请求失败：${response.status}`;
+    throw new Error(message);
+  }
+
+  const content = payload?.choices?.[0]?.message?.content;
+  if (typeof content !== 'string') {
+    throw new Error('模型响应缺少 message.content。');
+  }
+
+  return parseAiTaskResponse(content);
+}
+
+function getPlanStatusLabel(status: PlanStatus) {
+  if (status === 'submitting') {
+    return '写入中';
+  }
+  if (status === 'submitted') {
+    return '已导入';
+  }
+  if (status === 'error') {
+    return '失败';
+  }
+
+  return '待确认';
+}
+
 export function ChatView({ onSubmitPlan }: ChatViewProps) {
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
   const [draft, setDraft] = useState('');
-  const canSend = draft.trim().length > 0;
+  const [sendState, setSendState] = useState<ChatSendState>('idle');
+  const canSend = draft.trim().length > 0 && sendState === 'idle';
+
+  const appendMessage = (message: ChatMessage) => {
+    setMessages((current) => [...current, message]);
+  };
 
   const updatePlanStatus = (id: string, status: PlanStatus, errorMessage?: string) => {
     setMessages((current) =>
@@ -137,47 +254,48 @@ export function ChatView({ onSubmitPlan }: ChatViewProps) {
     try {
       await onSubmitPlan(plan);
       updatePlanStatus(id, 'submitted');
-      setMessages((current) => [
-        ...current,
-        {
-          id: makeId('assistant'),
-          kind: 'text',
-          role: 'assistant',
-          text: '\u5df2\u5b89\u5168\u5bfc\u5165\u672c\u5730 SQLite\u3002',
-        },
-      ]);
+      appendMessage({
+        id: makeId('assistant'),
+        kind: 'text',
+        role: 'assistant',
+        text: '已按你的确认安全导入本地 SQLite。',
+      });
     } catch (error) {
-      updatePlanStatus(id, 'error', error instanceof Error ? error.message : '\u5bfc\u5165\u5931\u8d25');
+      updatePlanStatus(id, 'error', error instanceof Error ? error.message : '导入失败');
     }
   };
 
-  const sendMessage = () => {
+  const sendMessage = async () => {
     const text = draft.trim();
-    if (!text) {
+    if (!text || sendState === 'sending') {
       return;
     }
 
-    const plan = buildTransactionPlan(text);
-    setMessages((current) => [
-      ...current,
-      { id: makeId('user'), kind: 'text', role: 'user', text },
-      plan
-        ? { id: makeId('plan'), kind: 'plan', role: 'assistant', plan, status: 'draft' }
-        : {
-            id: makeId('assistant'),
-            kind: 'text',
-            role: 'assistant',
-            text: '\u6211\u5df2\u8bb0\u4e0b\uff0c\u4f46\u8fd9\u6761\u6ca1\u6709\u89e6\u53d1\u672c\u5730\u4e8b\u52a1\u3002',
-          },
-    ]);
     setDraft('');
+    setSendState('sending');
+    appendMessage({ id: makeId('user'), kind: 'text', role: 'user', text });
+
+    try {
+      const aiTasks = await requestAiTasks(text);
+      const plan = buildTransactionPlan(text, aiTasks);
+      appendMessage({ id: makeId('plan'), kind: 'plan', role: 'assistant', plan, status: 'draft' });
+    } catch (error) {
+      appendMessage({
+        id: makeId('assistant'),
+        kind: 'text',
+        role: 'assistant',
+        text: error instanceof Error ? error.message : '模型请求失败，请稍后重试。',
+      });
+    } finally {
+      setSendState('idle');
+    }
   };
 
   const footer = useMemo(
     () => (
       <View style={styles.composer}>
         <TextInput
-          placeholder="\u8ddf MyBrain \u8bf4\u4e00\u53e5"
+          placeholder="例如：帮我把写论文拆解一下"
           placeholderTextColor="#8E8E93"
           value={draft}
           onChangeText={setDraft}
@@ -190,11 +308,11 @@ export function ChatView({ onSubmitPlan }: ChatViewProps) {
           onPress={sendMessage}
           style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
         >
-          <Text style={styles.sendText}>{'\u53d1\u9001'}</Text>
+          <Text style={styles.sendText}>{sendState === 'sending' ? '思考' : '发送'}</Text>
         </Pressable>
       </View>
     ),
-    [canSend, draft],
+    [canSend, draft, sendState],
   );
 
   return (
@@ -203,8 +321,8 @@ export function ChatView({ onSubmitPlan }: ChatViewProps) {
       style={styles.container}
     >
       <View style={styles.header}>
-        <Text style={styles.kicker}>{'\u52a9\u7406'}</Text>
-        <Text style={styles.title}>{'\u5148\u786e\u8ba4\uff0c\u518d\u5199\u5165'}</Text>
+        <Text style={styles.kicker}>助理</Text>
+        <Text style={styles.title}>先确认，再写入</Text>
       </View>
 
       <FlatList
@@ -219,13 +337,13 @@ export function ChatView({ onSubmitPlan }: ChatViewProps) {
                 <View style={styles.planHeader}>
                   <View style={styles.planTitleBlock}>
                     <Text style={styles.planTitle}>{item.plan.title}</Text>
-                    <Text style={styles.planSubtitle}>{'\u4e8b\u52a1\u786e\u8ba4\u5361'}</Text>
+                    <Text style={styles.planSubtitle}>事务确认卡</Text>
                   </View>
-                  <Text style={styles.planStatus}>{item.status}</Text>
+                  <Text style={styles.planStatus}>{getPlanStatusLabel(item.status)}</Text>
                 </View>
                 <Text style={styles.planText}>{item.plan.sourceText}</Text>
                 <View style={styles.operationBox}>
-                  <Text style={styles.operationLabel}>{'\u5c06\u5199\u5165\u7684\u4efb\u52a1'}</Text>
+                  <Text style={styles.operationLabel}>确认后将写入</Text>
                   {item.plan.operations.map((operation) =>
                     operation.kind === 'upsert' ? (
                       <Text key={operation.task.id} numberOfLines={1} style={styles.operationText}>
@@ -244,7 +362,7 @@ export function ChatView({ onSubmitPlan }: ChatViewProps) {
                     (item.status === 'submitting' || item.status === 'submitted') && styles.confirmButtonDisabled,
                   ]}
                 >
-                  <Text style={styles.confirmText}>{'\u786e\u8ba4\u5e76\u5bfc\u5165\u672c\u5730'}</Text>
+                  <Text style={styles.confirmText}>确认并导入本地</Text>
                 </Pressable>
               </View>
             );
@@ -262,6 +380,18 @@ export function ChatView({ onSubmitPlan }: ChatViewProps) {
     </KeyboardAvoidingView>
   );
 }
+
+const baseCard = {
+  borderRadius: 12,
+  backgroundColor: '#FFFFFF',
+  borderWidth: 1,
+  borderColor: '#ECECEE',
+  shadowColor: '#1C1C1E',
+  shadowOffset: { width: 0, height: 8 },
+  shadowOpacity: 0.03,
+  shadowRadius: 12,
+  elevation: 1,
+} as const;
 
 const styles = StyleSheet.create({
   container: {
@@ -319,17 +449,9 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   planCard: {
-    borderRadius: 12,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#ECECEE',
+    ...baseCard,
     padding: 14,
     gap: 12,
-    shadowColor: '#1C1C1E',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.03,
-    shadowRadius: 12,
-    elevation: 1,
   },
   planHeader: {
     flexDirection: 'row',

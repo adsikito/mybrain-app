@@ -1,28 +1,26 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import * as Calendar from 'expo-calendar';
 
 import type { TaskRecord } from '../../database';
 
 export interface CalendarViewProps {
   tasks: TaskRecord[];
+  dayStartHour: number;
+  dayEndHour: number;
   onScheduleTask: (taskId: string, startAt: number, endAt: number) => void;
 }
 
-type CalendarEvent = {
+type SystemCalendarEvent = {
   id: string;
   title: string;
-  startHour: number;
-  endHour: number;
+  startAt: number;
+  endAt: number;
 };
 
-const WEEK_DAYS = ['\u6708', '\u706b', '\u6c34', '\u6728', '\u91d1', '\u571f', '\u65e5'];
-const HOURS = Array.from({ length: 15 }, (_, index) => index + 8);
+type PermissionState = 'loading' | 'granted' | 'denied' | 'unavailable';
 
-const MOCK_EVENTS: CalendarEvent[] = [
-  { id: 'event-standup', title: '\u56e2\u961f\u540c\u6b65', startHour: 9, endHour: 10 },
-  { id: 'event-call', title: '\u4ea7\u54c1\u8bc4\u5ba1', startHour: 13, endHour: 14 },
-  { id: 'event-review', title: '\u665a\u95f4\u590d\u76d8', startHour: 21, endHour: 22 },
-];
+const WEEK_DAYS = ['一', '二', '三', '四', '五', '六', '日'];
 
 function getTodayAt(hour: number, minute = 0) {
   const date = new Date();
@@ -30,15 +28,136 @@ function getTodayAt(hour: number, minute = 0) {
   return date.getTime();
 }
 
+function getTodayBounds() {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+
+  return { start, end };
+}
+
+function timestampFromCalendarDate(value: string | Date | number | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+
+  if (typeof value === 'number') {
+    return value;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
 function getHourFromTimestamp(timestamp: number | null) {
   if (!timestamp) {
     return null;
   }
+
   return new Date(timestamp).getHours();
 }
 
-export function CalendarView({ tasks, onScheduleTask }: CalendarViewProps) {
+function getTimeRangeLabel(startAt: number | null, endAt: number | null) {
+  if (!startAt || !endAt) {
+    return '时间未定';
+  }
+
+  const start = new Date(startAt);
+  const end = new Date(endAt);
+  return `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')} - ${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`;
+}
+
+function clampHour(value: number, fallback: number) {
+  if (Number.isNaN(value)) {
+    return fallback;
+  }
+
+  return Math.min(23, Math.max(0, Math.round(value)));
+}
+
+export function CalendarView({ tasks, dayStartHour, dayEndHour, onScheduleTask }: CalendarViewProps) {
   const [collapsed, setCollapsed] = useState(false);
+  const [permissionState, setPermissionState] = useState<PermissionState>('loading');
+  const [systemEvents, setSystemEvents] = useState<SystemCalendarEvent[]>([]);
+
+  const normalizedStartHour = clampHour(dayStartHour, 8);
+  const normalizedEndHour = Math.max(normalizedStartHour + 1, clampHour(dayEndHour, 22));
+  const hours = useMemo(
+    () => Array.from({ length: normalizedEndHour - normalizedStartHour + 1 }, (_, index) => normalizedStartHour + index),
+    [normalizedEndHour, normalizedStartHour],
+  );
+
+  useEffect(() => {
+    let alive = true;
+
+    const loadSystemEvents = async () => {
+      setPermissionState('loading');
+      try {
+        const permission = await Calendar.requestCalendarPermissionsAsync();
+        if (!alive) {
+          return;
+        }
+
+        if (permission.status !== 'granted') {
+          setPermissionState('denied');
+          setSystemEvents([]);
+          return;
+        }
+
+        const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
+        const calendarIds = calendars.map((item) => item.id).filter(Boolean);
+        if (calendarIds.length === 0) {
+          setPermissionState('granted');
+          setSystemEvents([]);
+          return;
+        }
+
+        const { start, end } = getTodayBounds();
+        const events = await Calendar.getEventsAsync(calendarIds, start, end);
+        if (!alive) {
+          return;
+        }
+
+        setSystemEvents(
+          events
+            .map((event) => {
+              const startAt = timestampFromCalendarDate(event.startDate);
+              const endAt = timestampFromCalendarDate(event.endDate);
+              if (!startAt || !endAt) {
+                return null;
+              }
+
+              return {
+                id: event.id,
+                title: event.title || '未命名日程',
+                startAt,
+                endAt,
+              };
+            })
+            .filter((event): event is SystemCalendarEvent => event !== null)
+            .sort((left, right) => left.startAt - right.startAt),
+        );
+        setPermissionState('granted');
+      } catch {
+        if (alive) {
+          setPermissionState('unavailable');
+          setSystemEvents([]);
+        }
+      }
+    };
+
+    void loadSystemEvents();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const scheduledTasks = useMemo(
     () =>
@@ -62,28 +181,47 @@ export function CalendarView({ tasks, onScheduleTask }: CalendarViewProps) {
   );
 
   const quickSchedule = (task: TaskRecord, index: number) => {
-    const startHour = 16 + (index % 4);
+    const hourRange = Math.max(1, normalizedEndHour - normalizedStartHour);
+    const startHour = normalizedStartHour + (index % hourRange);
     onScheduleTask(task.id, getTodayAt(startHour), getTodayAt(startHour, 45));
   };
+
+  const permissionCopy =
+    permissionState === 'loading'
+      ? '正在读取系统日历'
+      : permissionState === 'granted'
+        ? systemEvents.length === 0
+          ? '今日没有系统日程'
+          : '系统日历已接入'
+        : permissionState === 'denied'
+          ? '未获得系统日历权限'
+          : '当前平台暂不可读取系统日历';
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.kicker}>{'\u65e5\u5386'}</Text>
-        <Text style={styles.title}>{'\u53cc\u8f74\u5e76\u8f68\u6392\u7a0b'}</Text>
+        <Text style={styles.kicker}>日历</Text>
+        <Text style={styles.title}>双轴并轨排程</Text>
       </View>
 
       <View style={styles.weekRow}>
         {WEEK_DAYS.map((day, index) => (
-          <View key={day} style={[styles.dayPill, index === 0 && styles.dayPillActive]}>
-            <Text style={[styles.dayText, index === 0 && styles.dayTextActive]}>{day}</Text>
+          <View key={day} style={[styles.dayPill, index === new Date().getDay() - 1 && styles.dayPillActive]}>
+            <Text style={[styles.dayText, index === new Date().getDay() - 1 && styles.dayTextActive]}>{day}</Text>
           </View>
         ))}
       </View>
 
+      <View style={styles.trackLegend}>
+        <Text style={styles.legendText}>左轨 系统日程</Text>
+        <Text style={styles.legendText}>右轨 弹性待办</Text>
+      </View>
+
+      <Text style={styles.permissionText}>{permissionCopy}</Text>
+
       <ScrollView contentContainerStyle={styles.timeline} showsVerticalScrollIndicator={false}>
-        {HOURS.map((hour) => {
-          const events = MOCK_EVENTS.filter((event) => event.startHour === hour);
+        {hours.map((hour) => {
+          const events = systemEvents.filter((event) => getHourFromTimestamp(event.startAt) === hour);
           const timeTasks = scheduledTasks.filter((task) => getHourFromTimestamp(task.scheduled_start_at) === hour);
 
           return (
@@ -94,7 +232,7 @@ export function CalendarView({ tasks, onScheduleTask }: CalendarViewProps) {
                 {events.map((event) => (
                   <View key={event.id} style={styles.eventCard}>
                     <Text numberOfLines={1} style={styles.eventTitle}>{event.title}</Text>
-                    <Text style={styles.eventTime}>{`${event.startHour}:00 - ${event.endHour}:00`}</Text>
+                    <Text style={styles.eventTime}>{getTimeRangeLabel(event.startAt, event.endAt)}</Text>
                   </View>
                 ))}
               </View>
@@ -103,7 +241,7 @@ export function CalendarView({ tasks, onScheduleTask }: CalendarViewProps) {
                 {timeTasks.map((task) => (
                   <View key={task.id} style={styles.taskBox}>
                     <Text numberOfLines={2} style={styles.taskTitle}>{task.title}</Text>
-                    <Text style={styles.taskTime}>{'\u5f39\u6027\u65f6\u95f4\u76d2'}</Text>
+                    <Text style={styles.taskTime}>{getTimeRangeLabel(task.scheduled_start_at, task.scheduled_end_at)}</Text>
                   </View>
                 ))}
               </View>
@@ -114,13 +252,16 @@ export function CalendarView({ tasks, onScheduleTask }: CalendarViewProps) {
 
       <View style={styles.drawer}>
         <Pressable accessibilityRole="button" onPress={() => setCollapsed((value) => !value)} style={styles.drawerHeader}>
-          <Text style={styles.drawerTitle}>{'\u5feb\u901f\u6392\u7a0b'}</Text>
-          <Text style={styles.drawerToggle}>{collapsed ? '\u5c55\u5f00' : '\u6536\u8d77'}</Text>
+          <View style={styles.drawerTitleBlock}>
+            <Text style={styles.drawerTitle}>快速排程</Text>
+            <Text style={styles.drawerDetail}>点击任务后放入当前作息时间轴的空白段</Text>
+          </View>
+          <Text style={styles.drawerToggle}>{collapsed ? '展开' : '收起'}</Text>
         </Pressable>
 
         {!collapsed ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.unscheduledList}>
-            {unscheduledTasks.slice(0, 8).map((task, index) => (
+            {unscheduledTasks.slice(0, 10).map((task, index) => (
               <Pressable
                 key={task.id}
                 accessibilityRole="button"
@@ -130,13 +271,25 @@ export function CalendarView({ tasks, onScheduleTask }: CalendarViewProps) {
                 <Text numberOfLines={1} style={styles.unscheduledText}>{task.title}</Text>
               </Pressable>
             ))}
-            {unscheduledTasks.length === 0 ? <Text style={styles.emptyDrawer}>{'\u6ca1\u6709\u672a\u6392\u7a0b\u4efb\u52a1'}</Text> : null}
+            {unscheduledTasks.length === 0 ? <Text style={styles.emptyDrawer}>没有未排程任务</Text> : null}
           </ScrollView>
         ) : null}
       </View>
     </View>
   );
 }
+
+const baseCard = {
+  borderRadius: 12,
+  backgroundColor: '#FFFFFF',
+  borderWidth: 1,
+  borderColor: '#ECECEE',
+  shadowColor: '#1C1C1E',
+  shadowOffset: { width: 0, height: 8 },
+  shadowOpacity: 0.03,
+  shadowRadius: 12,
+  elevation: 1,
+} as const;
 
 const styles = StyleSheet.create({
   container: {
@@ -188,9 +341,27 @@ const styles = StyleSheet.create({
   dayTextActive: {
     color: '#FFFFFF',
   },
+  trackLegend: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 72,
+    paddingBottom: 4,
+  },
+  legendText: {
+    color: '#8E8E93',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  permissionText: {
+    color: '#8E8E93',
+    fontSize: 12,
+    fontWeight: '700',
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
   timeline: {
     paddingHorizontal: 16,
-    paddingBottom: 150,
+    paddingBottom: 154,
   },
   hourRow: {
     minHeight: 76,
@@ -209,6 +380,7 @@ const styles = StyleSheet.create({
   track: {
     flex: 1,
     gap: 6,
+    minWidth: 0,
   },
   emptyLine: {
     height: 1,
@@ -235,17 +407,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   taskBox: {
+    ...baseCard,
     minHeight: 58,
-    borderRadius: 12,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#ECECEE',
     padding: 10,
-    shadowColor: '#1C1C1E',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.03,
-    shadowRadius: 12,
-    elevation: 1,
   },
   taskTitle: {
     color: '#1C1C1E',
@@ -279,11 +443,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 12,
+  },
+  drawerTitleBlock: {
+    flex: 1,
+    gap: 2,
   },
   drawerTitle: {
     color: '#1C1C1E',
     fontSize: 15,
     fontWeight: '800',
+  },
+  drawerDetail: {
+    color: '#8E8E93',
+    fontSize: 12,
+    lineHeight: 16,
   },
   drawerToggle: {
     color: '#007AFF',

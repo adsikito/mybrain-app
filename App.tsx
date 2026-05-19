@@ -45,6 +45,8 @@ const DEFAULT_FLAGS: SettingsState = {
   denseLayout: false,
 };
 
+const DEFAULT_DAY_START_HOUR = 8;
+const DEFAULT_DAY_END_HOUR = 22;
 const FOCUS_DURATION_MS = 25 * 60 * 1000;
 
 function formatRemaining(ms: number) {
@@ -65,6 +67,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('matrix');
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [flags, setFlags] = useState<SettingsState>(DEFAULT_FLAGS);
+  const [dayStartHour, setDayStartHour] = useState(DEFAULT_DAY_START_HOUR);
+  const [dayEndHour, setDayEndHour] = useState(DEFAULT_DAY_END_HOUR);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [focusSession, setFocusSession] = useState<FocusSession | null>(null);
   const [pendingAbandonTaskId, setPendingAbandonTaskId] = useState<string | null>(null);
@@ -295,7 +299,14 @@ export default function App() {
           />
         );
       case 'calendar':
-        return <CalendarView tasks={tasks} onScheduleTask={handleScheduleTask} />;
+        return (
+          <CalendarView
+            tasks={tasks}
+            dayStartHour={dayStartHour}
+            dayEndHour={dayEndHour}
+            onScheduleTask={handleScheduleTask}
+          />
+        );
       case 'chat':
         return <ChatView onSubmitPlan={handleSubmitPlan} />;
       case 'settings':
@@ -305,6 +316,12 @@ export default function App() {
             values={flags}
             onChangeValue={(key, next) => {
               setFlags((current) => ({ ...current, [key]: next }));
+            }}
+            dayStartHour={dayStartHour}
+            dayEndHour={dayEndHour}
+            onChangeDayHours={(next) => {
+              setDayStartHour(next.dayStartHour);
+              setDayEndHour(next.dayEndHour);
             }}
             onSyncBackup={async () => {
               await checkpointWal();

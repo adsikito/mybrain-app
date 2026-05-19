@@ -1,8 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
-
-import type { TaskTransactionPlan } from '../../database';
 
 export type SettingsFeatureKey =
   | 'matrixEnabled'
@@ -17,7 +15,10 @@ export type SettingsState = Record<SettingsFeatureKey, boolean>;
 
 export interface SettingsViewProps {
   values: SettingsState;
+  dayStartHour: number;
+  dayEndHour: number;
   onChangeValue: (key: SettingsFeatureKey, next: boolean) => void;
+  onChangeDayHours: (next: { dayStartHour: number; dayEndHour: number }) => void;
   onSyncBackup: () => Promise<void>;
 }
 
@@ -27,48 +28,136 @@ type SettingRow = {
   detail: string;
 };
 
+export const API_KEY_STORAGE_KEY = 'mybrain_api_key';
+export const API_BASE_URL_STORAGE_KEY = 'mybrain_api_base_url';
+export const MODEL_NAME_STORAGE_KEY = 'mybrain_model_name';
+export const DEFAULT_API_BASE_URL = 'https://api.openai.com/v1';
+export const DEFAULT_MODEL_NAME = 'gpt-4o';
+
 const SETTINGS: SettingRow[] = [
-  { key: 'matrixEnabled', title: '\u77e9\u9635\u9875', detail: '\u663e\u793a 2x2 \u56db\u8c61\u9650' },
-  { key: 'calendarEnabled', title: '\u65e5\u5386\u9875', detail: '\u663e\u793a\u53cc\u8f74\u5e76\u8f68\u6392\u7a0b' },
-  { key: 'tasksEnabled', title: '\u6e05\u5355\u9875', detail: '\u663e\u793a\u53ef\u6ed1\u52a8\u4efb\u52a1\u5217\u8868' },
-  { key: 'haptics', title: '\u9707\u52a8\u53cd\u9988', detail: '\u64cd\u4f5c\u65f6\u5f00\u542f\u8f7b\u5fae\u9707\u52a8' },
-  { key: 'demoSeed', title: '\u793a\u4f8b\u6570\u636e', detail: '\u9996\u6b21\u542f\u52a8\u81ea\u52a8\u5851\u6837' },
-  { key: 'pinchCollapse', title: '\u6350\u5361\u6536\u8d77', detail: '\u5141\u8bb8\u56db\u8c61\u9650\u53cc\u6307\u7f29\u653e' },
-  { key: 'denseLayout', title: '\u7d27\u51d1\u7a0b\u5ea6', detail: '\u4f7f\u7528\u66f4\u7d27\u51d1\u7684\u95f4\u8ddd' },
+  { key: 'matrixEnabled', title: '矩阵页', detail: '显示 2x2 四象限画布' },
+  { key: 'calendarEnabled', title: '日历页', detail: '显示双轴并轨时间盒' },
+  { key: 'tasksEnabled', title: '清单页', detail: '显示可滑动任务列表' },
+  { key: 'haptics', title: '震动反馈', detail: '完成、搁置等操作时轻触反馈' },
+  { key: 'demoSeed', title: '示例数据', detail: '空库时自动注入基础样例任务' },
+  { key: 'pinchCollapse', title: '捏合收起', detail: '允许四象限双指缩回基础网格' },
+  { key: 'denseLayout', title: '紧凑布局', detail: '缩短部分列表与页面留白' },
 ];
 
-const API_KEY_STORAGE_KEY = 'mybrain_api_key';
-
 function maskApiKey(value: string) {
-  if (!value) {
-    return '\u672a\u8bbe\u7f6e';
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '未设置';
   }
-  if (value.length <= 8) {
-    return `${value.slice(0, 3)}...`;
+
+  if (trimmed.length <= 10) {
+    return `${trimmed.slice(0, 4)}...••••`;
   }
-  return `${value.slice(0, 7)}...\u2022\u2022\u2022\u2022`;
+
+  return `${trimmed.slice(0, 7)}...••••`;
 }
 
-export function SettingsView({ values, onChangeValue, onSyncBackup }: SettingsViewProps) {
+function clampHour(value: number) {
+  if (Number.isNaN(value)) {
+    return 8;
+  }
+
+  return Math.min(23, Math.max(0, Math.round(value)));
+}
+
+export function SettingsView({
+  values,
+  dayStartHour,
+  dayEndHour,
+  onChangeValue,
+  onChangeDayHours,
+  onSyncBackup,
+}: SettingsViewProps) {
   const [apiKey, setApiKey] = useState('');
+  const [apiBaseUrl, setApiBaseUrl] = useState(DEFAULT_API_BASE_URL);
+  const [modelName, setModelName] = useState(DEFAULT_MODEL_NAME);
   const [showKey, setShowKey] = useState(false);
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
+
+  useEffect(() => {
+    let alive = true;
+
+    const loadSecureSettings = async () => {
+      try {
+        const [storedKey, storedBaseUrl, storedModel] = await Promise.all([
+          SecureStore.getItemAsync(API_KEY_STORAGE_KEY),
+          SecureStore.getItemAsync(API_BASE_URL_STORAGE_KEY),
+          SecureStore.getItemAsync(MODEL_NAME_STORAGE_KEY),
+        ]);
+
+        if (!alive) {
+          return;
+        }
+
+        setApiKey(storedKey ?? '');
+        setApiBaseUrl(storedBaseUrl ?? DEFAULT_API_BASE_URL);
+        setModelName(storedModel ?? DEFAULT_MODEL_NAME);
+      } catch {
+        if (alive) {
+          setSaveState('error');
+        }
+      }
+    };
+
+    void loadSecureSettings();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const masked = useMemo(() => maskApiKey(apiKey), [apiKey]);
 
-  const saveApiKey = async () => {
-    await SecureStore.setItemAsync(API_KEY_STORAGE_KEY, apiKey);
+  const updateDayStart = (nextValue: number) => {
+    const nextStart = Math.min(clampHour(nextValue), dayEndHour - 1);
+    onChangeDayHours({ dayStartHour: nextStart, dayEndHour });
+  };
+
+  const updateDayEnd = (nextValue: number) => {
+    const nextEnd = Math.max(clampHour(nextValue), dayStartHour + 1);
+    onChangeDayHours({ dayStartHour, dayEndHour: nextEnd });
+  };
+
+  const saveSecureSettings = async () => {
+    setSaveState('saving');
+    try {
+      await Promise.all([
+        SecureStore.setItemAsync(API_KEY_STORAGE_KEY, apiKey.trim()),
+        SecureStore.setItemAsync(API_BASE_URL_STORAGE_KEY, apiBaseUrl.trim() || DEFAULT_API_BASE_URL),
+        SecureStore.setItemAsync(MODEL_NAME_STORAGE_KEY, modelName.trim() || DEFAULT_MODEL_NAME),
+      ]);
+      setSaveState('saved');
+    } catch {
+      setSaveState('error');
+    }
+  };
+
+  const runSyncBackup = async () => {
+    setSyncState('syncing');
+    try {
+      await onSyncBackup();
+      setSyncState('synced');
+    } catch {
+      setSyncState('error');
+    }
   };
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.kicker}>{'\u8bbe\u7f6e'}</Text>
-        <Text style={styles.title}>{'\u9690\u79c1\u4e0e\u7cfb\u7edf\u7535\u95f8'}</Text>
+        <Text style={styles.kicker}>设置</Text>
+        <Text style={styles.title}>隐私、模型与作息</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.panel}>
-          <Text style={styles.panelTitle}>{'\u529f\u80fd\u7535\u95f8'}</Text>
+          <Text style={styles.panelTitle}>功能电闸</Text>
           {SETTINGS.map((setting) => (
             <View key={setting.key} style={styles.row}>
               <View style={styles.rowCopy}>
@@ -86,40 +175,148 @@ export function SettingsView({ values, onChangeValue, onSyncBackup }: SettingsVi
         </View>
 
         <View style={styles.panel}>
-          <Text style={styles.panelTitle}>{'\u5bc6\u94a5\u4fdd\u5b58'}</Text>
-          <Text style={styles.panelDetail}>{'\u5b58\u50a8\u5728\u672c\u5730 SecureStore\uff0c\u5e73\u53f0\u4f18\u5148\u8d70 Keystore \u7ebf\u8def\u3002'}</Text>
-          <View style={styles.keyRow}>
+          <Text style={styles.panelTitle}>模型连接</Text>
+          <Text style={styles.panelDetail}>密钥、接口网址与模型名会同步保存到 SecureStore。你可以切换中转网关，也可以输入 deepseek-chat 等兼容模型。</Text>
+
+          <View style={styles.fieldGroup}>
+            <Text style={styles.fieldLabel}>API Key</Text>
+            <View style={styles.keyRow}>
+              <TextInput
+                value={apiKey}
+                onChangeText={setApiKey}
+                secureTextEntry={!showKey}
+                autoCapitalize="none"
+                autoCorrect={false}
+                placeholder="sk-proj..."
+                placeholderTextColor="#8E8E93"
+                style={styles.keyInput}
+              />
+              <Pressable accessibilityRole="button" onPress={() => setShowKey((value) => !value)} style={styles.keyButton}>
+                <Text style={styles.keyButtonText}>{showKey ? '隐藏' : '显示'}</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.maskText}>{masked}</Text>
+          </View>
+
+          <View style={styles.fieldGroup}>
+            <Text style={styles.fieldLabel}>接口网址</Text>
             <TextInput
-              value={apiKey}
-              onChangeText={setApiKey}
-              secureTextEntry={!showKey}
+              value={apiBaseUrl}
+              onChangeText={setApiBaseUrl}
               autoCapitalize="none"
               autoCorrect={false}
-              placeholder="sk-proj..."
+              keyboardType="url"
+              placeholder={DEFAULT_API_BASE_URL}
               placeholderTextColor="#8E8E93"
-              style={styles.keyInput}
+              style={styles.fullInput}
             />
-            <Pressable accessibilityRole="button" onPress={() => setShowKey((value) => !value)} style={styles.keyButton}>
-              <Text style={styles.keyButtonText}>{showKey ? '\u9690\u85cf' : '\u663e\u793a'}</Text>
-            </Pressable>
           </View>
-          <Text style={styles.maskText}>{masked}</Text>
-          <Pressable accessibilityRole="button" onPress={saveApiKey} style={styles.saveButton}>
-            <Text style={styles.saveButtonText}>{'\u4fdd\u5b58\u5bc6\u94a5'}</Text>
+
+          <View style={styles.fieldGroup}>
+            <Text style={styles.fieldLabel}>模型名称</Text>
+            <TextInput
+              value={modelName}
+              onChangeText={setModelName}
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder={DEFAULT_MODEL_NAME}
+              placeholderTextColor="#8E8E93"
+              style={styles.fullInput}
+            />
+          </View>
+
+          <Pressable
+            accessibilityRole="button"
+            disabled={saveState === 'saving'}
+            onPress={saveSecureSettings}
+            style={[styles.saveButton, saveState === 'saving' && styles.disabledButton]}
+          >
+            <Text style={styles.saveButtonText}>
+              {saveState === 'saving' ? '正在保存' : saveState === 'saved' ? '已安全保存' : '保存模型配置'}
+            </Text>
           </Pressable>
+          {saveState === 'error' ? <Text style={styles.errorText}>保存失败，请检查设备 SecureStore 状态。</Text> : null}
         </View>
 
         <View style={styles.panel}>
-          <Text style={styles.panelTitle}>{'\u540c\u6b65\u5907\u4efd'}</Text>
-          <Text style={styles.panelDetail}>{'\u5728\u5907\u4efd\u524d\u5148\u6267\u884c WAL checkpoint\uff0c\u518d\u8fdb\u884c WebDAV \u6216\u672c\u5730\u5907\u4efd\u3002'}</Text>
-          <Pressable accessibilityRole="button" onPress={onSyncBackup} style={styles.syncButton}>
-            <Text style={styles.syncButtonText}>{'\u540c\u6b65\u5907\u4efd'}</Text>
+          <Text style={styles.panelTitle}>每日作息</Text>
+          <Text style={styles.panelDetail}>日历时间轴会按你的作息节点动态生成，从开始时间到结束时间逐小时渲染。</Text>
+
+          <HourStepper
+            label="一天开始"
+            value={dayStartHour}
+            onDecrease={() => updateDayStart(dayStartHour - 1)}
+            onIncrease={() => updateDayStart(dayStartHour + 1)}
+          />
+          <HourStepper
+            label="一天结束"
+            value={dayEndHour}
+            onDecrease={() => updateDayEnd(dayEndHour - 1)}
+            onIncrease={() => updateDayEnd(dayEndHour + 1)}
+          />
+        </View>
+
+        <View style={styles.panel}>
+          <Text style={styles.panelTitle}>同步备份</Text>
+          <Text style={styles.panelDetail}>点击前会先阻塞执行 WAL checkpoint，把 .db-wal 合并回主库，避免单文件备份损坏。</Text>
+          <Pressable
+            accessibilityRole="button"
+            disabled={syncState === 'syncing'}
+            onPress={runSyncBackup}
+            style={[styles.syncButton, syncState === 'syncing' && styles.disabledButton]}
+          >
+            <Text style={styles.syncButtonText}>
+              {syncState === 'syncing' ? '正在合并 WAL' : syncState === 'synced' ? '已完成合并' : '同步备份'}
+            </Text>
           </Pressable>
+          {syncState === 'error' ? <Text style={styles.errorText}>WAL 合并失败，请稍后重试。</Text> : null}
         </View>
       </ScrollView>
     </View>
   );
 }
+
+function HourStepper({
+  label,
+  value,
+  onDecrease,
+  onIncrease,
+}: {
+  label: string;
+  value: number;
+  onDecrease: () => void;
+  onIncrease: () => void;
+}) {
+  return (
+    <View style={styles.stepperRow}>
+      <View style={styles.rowCopy}>
+        <Text style={styles.rowTitle}>{label}</Text>
+        <Text style={styles.rowDetail}>{`${String(value).padStart(2, '0')}:00`}</Text>
+      </View>
+      <View style={styles.stepperControls}>
+        <Pressable accessibilityRole="button" onPress={onDecrease} style={styles.stepperButton}>
+          <Text style={styles.stepperText}>-</Text>
+        </Pressable>
+        <Text style={styles.stepperValue}>{String(value).padStart(2, '0')}</Text>
+        <Pressable accessibilityRole="button" onPress={onIncrease} style={styles.stepperButton}>
+          <Text style={styles.stepperText}>+</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+const baseCard = {
+  borderRadius: 12,
+  backgroundColor: '#FFFFFF',
+  borderWidth: 1,
+  borderColor: '#ECECEE',
+  shadowColor: '#1C1C1E',
+  shadowOffset: { width: 0, height: 8 },
+  shadowOpacity: 0.03,
+  shadowRadius: 12,
+  elevation: 1,
+} as const;
 
 const styles = StyleSheet.create({
   container: {
@@ -149,17 +346,9 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   panel: {
-    borderRadius: 12,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#ECECEE',
+    ...baseCard,
     padding: 14,
     gap: 10,
-    shadowColor: '#1C1C1E',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.03,
-    shadowRadius: 12,
-    elevation: 1,
   },
   panelTitle: {
     color: '#1C1C1E',
@@ -194,6 +383,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 17,
   },
+  fieldGroup: {
+    gap: 7,
+  },
+  fieldLabel: {
+    color: '#8E8E93',
+    fontSize: 12,
+    fontWeight: '800',
+  },
   keyRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -201,6 +398,16 @@ const styles = StyleSheet.create({
   },
   keyInput: {
     flex: 1,
+    minHeight: 46,
+    borderRadius: 12,
+    backgroundColor: '#F9F9FB',
+    borderWidth: 1,
+    borderColor: '#ECECEE',
+    color: '#1C1C1E',
+    paddingHorizontal: 14,
+    fontSize: 15,
+  },
+  fullInput: {
     minHeight: 46,
     borderRadius: 12,
     backgroundColor: '#F9F9FB',
@@ -242,6 +449,42 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
   },
+  stepperRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F4F4F6',
+    paddingTop: 10,
+  },
+  stepperControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    backgroundColor: '#F9F9FB',
+    borderWidth: 1,
+    borderColor: '#ECECEE',
+    overflow: 'hidden',
+  },
+  stepperButton: {
+    width: 38,
+    minHeight: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepperText: {
+    color: '#007AFF',
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  stepperValue: {
+    minWidth: 38,
+    textAlign: 'center',
+    color: '#1C1C1E',
+    fontSize: 14,
+    fontWeight: '800',
+  },
   syncButton: {
     minHeight: 44,
     borderRadius: 12,
@@ -253,5 +496,13 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '800',
+  },
+  disabledButton: {
+    opacity: 0.48,
+  },
+  errorText: {
+    color: '#FF3B30',
+    fontSize: 12,
+    lineHeight: 17,
   },
 });
