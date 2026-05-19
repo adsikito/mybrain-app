@@ -492,75 +492,84 @@ export async function countTasks() {
   return result?.count ?? 0;
 }
 
-const DEMO_TASKS: TaskInput[] = [
-  {
-    id: 'demo-q1-focus',
-    title: '\u5904\u7406\u4eca\u5929\u53d1\u5e03\u524d\u7684\u963b\u585e\u95ee\u9898',
-    quadrant: 1,
-    status: 'pending',
-    payload: { source: 'demo' },
-  },
-  {
-    id: 'demo-q1-ship',
-    title: '\u786e\u8ba4\u52a9\u7406\u4e8b\u52a1\u5361\u7247\u5199\u5165\u94fe\u8def',
-    quadrant: 1,
-    status: 'pending',
-    payload: { source: 'demo' },
-  },
-  {
-    id: 'demo-q2-flow',
-    title: '\u6253\u78e8\u56db\u8c61\u9650\u653e\u5927\u4e0e\u6536\u6298\u4f53\u9a8c',
-    quadrant: 2,
-    status: 'pending',
-    scheduledStartAt: new Date().setHours(10, 30, 0, 0),
-    scheduledEndAt: new Date().setHours(11, 20, 0, 0),
-    payload: { source: 'demo' },
-  },
-  {
-    id: 'demo-q2-polish',
-    title: '\u5fae\u8c03\u4efb\u52a1\u5361\u7247\u6ed1\u52a8\u624b\u611f',
-    quadrant: 2,
-    status: 'pending',
-    payload: { source: 'demo' },
-  },
-  {
-    id: 'demo-q3-admin',
-    title: '\u68c0\u67e5\u8bbe\u7f6e\u9875\u9690\u79c1\u7535\u95f8',
-    quadrant: 3,
-    status: 'pending',
-    scheduledStartAt: new Date().setHours(14, 0, 0, 0),
-    scheduledEndAt: new Date().setHours(14, 30, 0, 0),
-    payload: { source: 'demo' },
-  },
-  {
-    id: 'demo-q3-db',
-    title: '\u5ba1\u8ba1\u672c\u5730 SQLite \u4e8b\u4ef6\u6d41',
-    quadrant: 3,
-    status: 'pending',
-    payload: { source: 'demo' },
-  },
-  {
-    id: 'demo-q4-calm',
-    title: '\u6e05\u7406\u4f4e\u4ef7\u503c\u5f85\u529e\u5165\u53e3',
-    quadrant: 4,
-    status: 'pending',
-    payload: { source: 'demo' },
-  },
-  {
-    id: 'demo-q4-capture',
-    title: '\u6574\u7406\u672c\u8f6e\u8fed\u4ee3\u8bb0\u5f55',
-    quadrant: 4,
-    status: 'pending',
-    payload: { source: 'demo' },
-  },
-];
+function buildDemoTasks() {
+  const now = new Date();
+  const todayAt = (hour: number, minute = 0) => {
+    const date = new Date(now);
+    date.setHours(hour, minute, 0, 0);
+    return date.getTime();
+  };
+
+  return [
+    {
+      id: 'demo-q1-focus',
+      title: '\u5904\u7406\u4eca\u5929\u53d1\u5e03\u524d\u7684\u963b\u585e\u95ee\u9898',
+      quadrant: 1,
+      status: 'pending',
+      payload: { source: 'demo' },
+    },
+    {
+      id: 'demo-q1-ship',
+      title: '\u786e\u8ba4\u52a9\u7406\u4e8b\u52a1\u5361\u7247\u5199\u5165\u94fe\u8def',
+      quadrant: 1,
+      status: 'pending',
+      payload: { source: 'demo' },
+    },
+    {
+      id: 'demo-q2-flow',
+      title: '\u6253\u78e8\u56db\u8c61\u9650\u653e\u5927\u4e0e\u6536\u6298\u4f53\u9a8c',
+      quadrant: 2,
+      status: 'pending',
+      scheduledStartAt: todayAt(10, 30),
+      scheduledEndAt: todayAt(11, 20),
+      payload: { source: 'demo' },
+    },
+    {
+      id: 'demo-q2-polish',
+      title: '\u5fae\u8c03\u4efb\u52a1\u5361\u7247\u6ed1\u52a8\u624b\u611f',
+      quadrant: 2,
+      status: 'pending',
+      payload: { source: 'demo' },
+    },
+    {
+      id: 'demo-q3-admin',
+      title: '\u68c0\u67e5\u8bbe\u7f6e\u9875\u9690\u79c1\u7535\u95f8',
+      quadrant: 3,
+      status: 'pending',
+      scheduledStartAt: todayAt(14, 0),
+      scheduledEndAt: todayAt(14, 30),
+      payload: { source: 'demo' },
+    },
+    {
+      id: 'demo-q3-db',
+      title: '\u5ba1\u8ba1\u672c\u5730 SQLite \u4e8b\u4ef6\u6d41',
+      quadrant: 3,
+      status: 'pending',
+      payload: { source: 'demo' },
+    },
+    {
+      id: 'demo-q4-calm',
+      title: '\u6e05\u7406\u4f4e\u4ef7\u503c\u5f85\u529e\u5165\u53e3',
+      quadrant: 4,
+      status: 'pending',
+      payload: { source: 'demo' },
+    },
+    {
+      id: 'demo-q4-capture',
+      title: '\u6574\u7406\u672c\u8f6e\u8fed\u4ee3\u8bb0\u5f55',
+      quadrant: 4,
+      status: 'pending',
+      payload: { source: 'demo' },
+    },
+  ] satisfies TaskInput[];
+}
 
 export async function ensureDemoTasks() {
   if ((await countTasks()) > 0) {
     return;
   }
 
-  for (const task of DEMO_TASKS) {
+  for (const task of buildDemoTasks()) {
     await upsertTask(task);
   }
 }

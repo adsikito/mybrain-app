@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 
+import { CARD_SURFACE_STYLE } from '../components/cardSurface';
+
 export type SettingsFeatureKey =
   | 'matrixEnabled'
   | 'calendarEnabled'
@@ -63,6 +65,36 @@ function clampHour(value: number) {
   }
 
   return Math.min(23, Math.max(0, Math.round(value)));
+}
+
+function HourStepper({
+  label,
+  value,
+  onDecrease,
+  onIncrease,
+}: {
+  label: string;
+  value: number;
+  onDecrease: () => void;
+  onIncrease: () => void;
+}) {
+  return (
+    <View style={styles.stepperRow}>
+      <View style={styles.rowCopy}>
+        <Text style={styles.rowTitle}>{label}</Text>
+        <Text style={styles.rowDetail}>{`${String(value).padStart(2, '0')}:00`}</Text>
+      </View>
+      <View style={styles.stepperControls}>
+        <Pressable accessibilityRole="button" onPress={onDecrease} style={styles.stepperButton}>
+          <Text style={styles.stepperText}>-</Text>
+        </Pressable>
+        <Text style={styles.stepperValue}>{String(value).padStart(2, '0')}</Text>
+        <Pressable accessibilityRole="button" onPress={onIncrease} style={styles.stepperButton}>
+          <Text style={styles.stepperText}>+</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
 }
 
 export function SettingsView({
@@ -176,7 +208,9 @@ export function SettingsView({
 
         <View style={styles.panel}>
           <Text style={styles.panelTitle}>模型连接</Text>
-          <Text style={styles.panelDetail}>密钥、接口网址与模型名会同步保存到 SecureStore。你可以切换中转网关，也可以输入 deepseek-chat 等兼容模型。</Text>
+          <Text style={styles.panelDetail}>
+            密钥、接口网址与模型名会同步保存到 SecureStore。你可以切换中转网关，也可以输入 deepseek-chat 等兼容模型。
+          </Text>
 
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>API Key</Text>
@@ -276,48 +310,6 @@ export function SettingsView({
   );
 }
 
-function HourStepper({
-  label,
-  value,
-  onDecrease,
-  onIncrease,
-}: {
-  label: string;
-  value: number;
-  onDecrease: () => void;
-  onIncrease: () => void;
-}) {
-  return (
-    <View style={styles.stepperRow}>
-      <View style={styles.rowCopy}>
-        <Text style={styles.rowTitle}>{label}</Text>
-        <Text style={styles.rowDetail}>{`${String(value).padStart(2, '0')}:00`}</Text>
-      </View>
-      <View style={styles.stepperControls}>
-        <Pressable accessibilityRole="button" onPress={onDecrease} style={styles.stepperButton}>
-          <Text style={styles.stepperText}>-</Text>
-        </Pressable>
-        <Text style={styles.stepperValue}>{String(value).padStart(2, '0')}</Text>
-        <Pressable accessibilityRole="button" onPress={onIncrease} style={styles.stepperButton}>
-          <Text style={styles.stepperText}>+</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
-const baseCard = {
-  borderRadius: 12,
-  backgroundColor: '#FFFFFF',
-  borderWidth: 1,
-  borderColor: '#ECECEE',
-  shadowColor: '#1C1C1E',
-  shadowOffset: { width: 0, height: 8 },
-  shadowOpacity: 0.03,
-  shadowRadius: 12,
-  elevation: 1,
-} as const;
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -346,7 +338,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   panel: {
-    ...baseCard,
+    ...CARD_SURFACE_STYLE,
     padding: 14,
     gap: 10,
   },

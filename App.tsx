@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -16,6 +16,7 @@ import {
   type TaskTransactionPlan,
 } from './database';
 import { BottomTabBar, type AppTab } from './src/components/BottomTabBar';
+import { CARD_SURFACE_STYLE } from './src/components/cardSurface';
 import { CalendarView } from './src/views/CalendarView';
 import { ChatView } from './src/views/ChatView';
 import { MatrixView } from './src/views/MatrixView';
@@ -73,6 +74,11 @@ export default function App() {
   const [focusSession, setFocusSession] = useState<FocusSession | null>(null);
   const [pendingAbandonTaskId, setPendingAbandonTaskId] = useState<string | null>(null);
   const [selectedReason, setSelectedReason] = useState<InterruptionReason | null>(null);
+  const focusSessionRef = useRef<FocusSession | null>(null);
+
+  useEffect(() => {
+    focusSessionRef.current = focusSession;
+  }, [focusSession]);
 
   const reloadTasks = useCallback(async () => {
     const rows = await listTasks(300);
@@ -136,15 +142,14 @@ export default function App() {
   }, []);
 
   const requestAbandon = useCallback(() => {
-    if (!focusSession) {
+    const current = focusSessionRef.current;
+    if (!current) {
       return;
     }
-    setPendingAbandonTaskId(focusSession.taskId);
+    setPendingAbandonTaskId(current.taskId);
     setSelectedReason(null);
-    setFocusSession((current) =>
-      current ? { ...current, state: 'reason' } : current,
-    );
-  }, [focusSession]);
+    setFocusSession((session) => (session ? { ...session, state: 'reason' } : session));
+  }, []);
 
   const confirmReason = useCallback(
     async (reason: InterruptionReason) => {
@@ -182,7 +187,9 @@ export default function App() {
       }
 
       if (current.state === 'active') {
-        return { ...current, state: 'paused' };
+        const elapsed = Date.now() - current.startedAt;
+        const remainingMs = Math.max(0, current.remainingMs - elapsed);
+        return { ...current, state: 'paused', remainingMs };
       }
 
       if (current.state === 'paused') {
@@ -243,7 +250,7 @@ export default function App() {
         }
 
         const elapsed = Date.now() - current.startedAt;
-        const remainingMs = Math.max(0, FOCUS_DURATION_MS - elapsed);
+        const remainingMs = Math.max(0, current.remainingMs - elapsed);
         if (remainingMs <= 0) {
           void handleComplete(current.taskId);
           return null;
@@ -254,7 +261,7 @@ export default function App() {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [focusSession, handleComplete]);
+  }, [focusSession?.state, handleComplete]);
 
   const visibleTabs = useMemo(
     () =>
@@ -434,18 +441,6 @@ export default function App() {
   );
 }
 
-const baseCard = {
-  borderRadius: 12,
-  backgroundColor: '#FFFFFF',
-  borderWidth: 1,
-  borderColor: '#ECECEE',
-  shadowColor: '#1C1C1E',
-  shadowOffset: { width: 0, height: 8 },
-  shadowOpacity: 0.03,
-  shadowRadius: 12,
-  elevation: 1,
-} as const;
-
 const styles = StyleSheet.create({
   root: {
     flex: 1,
@@ -524,7 +519,7 @@ const styles = StyleSheet.create({
     padding: 18,
   },
   focusCard: {
-    ...baseCard,
+    ...CARD_SURFACE_STYLE,
     width: '100%',
     padding: 16,
     gap: 10,
@@ -597,7 +592,7 @@ const styles = StyleSheet.create({
     padding: 18,
   },
   reasonCard: {
-    ...baseCard,
+    ...CARD_SURFACE_STYLE,
     width: '100%',
     padding: 16,
     gap: 10,

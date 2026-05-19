@@ -3,6 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import * as Calendar from 'expo-calendar';
 
 import type { TaskRecord } from '../../database';
+import { CARD_SURFACE_STYLE } from '../components/cardSurface';
 
 export interface CalendarViewProps {
   tasks: TaskRecord[];
@@ -92,6 +93,7 @@ export function CalendarView({ tasks, dayStartHour, dayEndHour, onScheduleTask }
     () => Array.from({ length: normalizedEndHour - normalizedStartHour + 1 }, (_, index) => normalizedStartHour + index),
     [normalizedEndHour, normalizedStartHour],
   );
+  const dayIndex = (new Date().getDay() + 6) % 7;
 
   useEffect(() => {
     let alive = true;
@@ -206,8 +208,8 @@ export function CalendarView({ tasks, dayStartHour, dayEndHour, onScheduleTask }
 
       <View style={styles.weekRow}>
         {WEEK_DAYS.map((day, index) => (
-          <View key={day} style={[styles.dayPill, index === new Date().getDay() - 1 && styles.dayPillActive]}>
-            <Text style={[styles.dayText, index === new Date().getDay() - 1 && styles.dayTextActive]}>{day}</Text>
+          <View key={day} style={[styles.dayPill, index === dayIndex && styles.dayPillActive]}>
+            <Text style={[styles.dayText, index === dayIndex && styles.dayTextActive]}>{day}</Text>
           </View>
         ))}
       </View>
@@ -254,7 +256,7 @@ export function CalendarView({ tasks, dayStartHour, dayEndHour, onScheduleTask }
         <Pressable accessibilityRole="button" onPress={() => setCollapsed((value) => !value)} style={styles.drawerHeader}>
           <View style={styles.drawerTitleBlock}>
             <Text style={styles.drawerTitle}>快速排程</Text>
-            <Text style={styles.drawerDetail}>点击任务后放入当前作息时间轴的空白段</Text>
+            <Text style={styles.drawerDetail}>点击未排程任务，把它放进当前作息时间轴的空白段</Text>
           </View>
           <Text style={styles.drawerToggle}>{collapsed ? '展开' : '收起'}</Text>
         </Pressable>
@@ -279,19 +281,7 @@ export function CalendarView({ tasks, dayStartHour, dayEndHour, onScheduleTask }
   );
 }
 
-const baseCard = {
-  borderRadius: 12,
-  backgroundColor: '#FFFFFF',
-  borderWidth: 1,
-  borderColor: '#ECECEE',
-  shadowColor: '#1C1C1E',
-  shadowOffset: { width: 0, height: 8 },
-  shadowOpacity: 0.03,
-  shadowRadius: 12,
-  elevation: 1,
-} as const;
-
-const styles = StyleSheet.create({
+export const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F9F9FB',
@@ -407,7 +397,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   taskBox: {
-    ...baseCard,
+    ...CARD_SURFACE_STYLE,
     minHeight: 58,
     padding: 10,
   },

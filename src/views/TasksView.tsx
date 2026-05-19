@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { SectionList, StyleSheet, Text, View } from 'react-native';
 
 import type { TaskRecord, TaskStatus } from '../../database';
+import { CARD_SURFACE_STYLE } from '../components/cardSurface';
 import { SwipeableTaskRow } from '../components/SwipeableTaskRow';
 
 export interface TasksViewProps {
@@ -129,10 +130,7 @@ const styles = StyleSheet.create({
   },
   emptyState: {
     marginTop: 24,
-    borderRadius: 12,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#ECECEE',
+    ...CARD_SURFACE_STYLE,
     padding: 18,
     gap: 6,
   },

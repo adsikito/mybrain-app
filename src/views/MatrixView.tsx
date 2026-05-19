@@ -10,6 +10,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import type { TaskRecord } from '../../database';
+import { CARD_SURFACE_STYLE } from '../components/cardSurface';
 import { SwipeableTaskRow } from '../components/SwipeableTaskRow';
 
 export interface MatrixViewProps {
@@ -171,18 +172,6 @@ export function MatrixView({
   );
 }
 
-const baseCard = {
-  borderRadius: 12,
-  backgroundColor: '#FFFFFF',
-  borderWidth: 1,
-  borderColor: '#ECECEE',
-  shadowColor: '#1C1C1E',
-  shadowOffset: { width: 0, height: 8 },
-  shadowOpacity: 0.03,
-  shadowRadius: 12,
-  elevation: 1,
-} as const;
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -212,7 +201,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   card: {
-    ...baseCard,
+    ...CARD_SURFACE_STYLE,
     width: '48%',
     minHeight: 178,
     padding: 14,
@@ -282,7 +271,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   expandedPanel: {
-    ...baseCard,
+    ...CARD_SURFACE_STYLE,
     flex: 1,
     padding: 14,
   },

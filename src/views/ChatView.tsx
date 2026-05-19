@@ -12,6 +12,7 @@ import {
 import * as SecureStore from 'expo-secure-store';
 
 import type { TaskInput, TaskTransactionPlan } from '../../database';
+import { CARD_SURFACE_STYLE } from '../components/cardSurface';
 import {
   API_BASE_URL_STORAGE_KEY,
   API_KEY_STORAGE_KEY,
@@ -46,7 +47,6 @@ type AiTaskItem = {
 };
 
 type AiTaskResponse = {
-  title?: string;
   tasks?: AiTaskItem[];
 };
 
@@ -80,11 +80,7 @@ function normalizeQuadrant(value: number | undefined) {
 }
 
 function stripJsonFence(value: string) {
-  return value
-    .trim()
-    .replace(/^```(?:json)?/u, '')
-    .replace(/```$/u, '')
-    .trim();
+  return value.trim().replace(/^```(?:json)?/u, '').replace(/```$/u, '').trim();
 }
 
 function parseAiTaskResponse(content: string): AiTaskItem[] {
@@ -308,7 +304,7 @@ export function ChatView({ onSubmitPlan }: ChatViewProps) {
           onPress={sendMessage}
           style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
         >
-          <Text style={styles.sendText}>{sendState === 'sending' ? '思考' : '发送'}</Text>
+          <Text style={styles.sendText}>{sendState === 'sending' ? '思考中' : '发送'}</Text>
         </Pressable>
       </View>
     ),
@@ -381,18 +377,6 @@ export function ChatView({ onSubmitPlan }: ChatViewProps) {
   );
 }
 
-const baseCard = {
-  borderRadius: 12,
-  backgroundColor: '#FFFFFF',
-  borderWidth: 1,
-  borderColor: '#ECECEE',
-  shadowColor: '#1C1C1E',
-  shadowOffset: { width: 0, height: 8 },
-  shadowOpacity: 0.03,
-  shadowRadius: 12,
-  elevation: 1,
-} as const;
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -449,7 +433,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   planCard: {
-    ...baseCard,
+    ...CARD_SURFACE_STYLE,
     padding: 14,
     gap: 12,
   },
